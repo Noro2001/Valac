@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual Environment
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Output files
+*.db
+*.json
+*.jsonl
+*.csv
+*.xml
+*.html
+*.txt
+!requirements.txt
+!README.md
+!targets.txt
+!dns.txt
+!wordlist.txt
+
+# Cache
+shodan_cache.json
+*.cache
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project specific
+out/
+*.log
+
