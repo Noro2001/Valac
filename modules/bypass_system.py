@@ -1,6 +1,6 @@
 """
 Shodan Bypass System - Advanced rate limit bypass techniques
-Integrated into Valak Scanner Module
+Integrated into Valac Scanner Module
 """
 
 import requests
@@ -130,7 +130,7 @@ class CacheManager:
             try:
                 with open(self.cache_file, 'r') as f:
                     self.cache = json.load(f)
-            except:
+            except (FileNotFoundError, json.JSONDecodeError, IOError):
                 self.cache = {}
     
     def save_cache(self):
@@ -139,7 +139,8 @@ class CacheManager:
             try:
                 with open(self.cache_file, 'w') as f:
                     json.dump(self.cache, f, indent=2)
-            except:
+            except (IOError, OSError, PermissionError):
+                # Silently ignore cache save errors
                 pass
     
     def get(self, ip):
@@ -177,7 +178,8 @@ class ProxyManager:
         try:
             with open(filename, 'r') as f:
                 self.proxies = [line.strip() for line in f if line.strip()]
-        except:
+        except (FileNotFoundError, IOError, PermissionError):
+            # Silently ignore proxy file errors
             pass
     
     def get_proxy(self):

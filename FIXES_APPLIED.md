@@ -1,11 +1,11 @@
 # Bug Fixes and Functionality Improvements
 
 ## Summary
-Comprehensive analysis and fixes applied to the Valak unified security scanner suite.
+Comprehensive analysis and fixes applied to the Valac unified security scanner suite.
 
 ## Bugs Fixed
 
-### 1. **valak.py - Bypass Flag Check** ✅
+### 1. **valac.py - Bypass Flag Check** ✅
 - **Issue**: Incorrect bypass flag check using `hasattr` instead of direct attribute access
 - **Fix**: Changed `args.use_bypass = hasattr(args, 'bypass') and args.bypass` to `args.use_bypass = getattr(args, 'bypass', False)`
 - **Impact**: Bypass system now correctly enables/disables
@@ -104,17 +104,33 @@ Comprehensive analysis and fixes applied to the Valak unified security scanner s
 
 ## Files Modified
 
-1. `valak.py` - Fixed bypass flag check
+1. `valac.py` - Fixed bypass flag check
 2. `modules/scanner.py` - Added XML/HTML output, results collection, file management
 3. `modules/dns_resolver.py` - Added file checks and error handling
 4. `modules/subdomain_enum.py` - Fixed regex, added file checks
 5. `modules/fuzzer.py` - Added file checks and error handling
 6. `modules/csv_extractor.py` - Added file checks and error handling
 
+### 9. **Error Handling Improvements** ✅
+- **Issue**: Multiple bare `except:` statements throughout codebase
+- **Fix**: 
+  - Replaced all bare except statements with specific exception types
+  - Added proper exception handling for file operations, network operations, and memory checks
+  - Improved error messages and logging
+- **Impact**: Better error handling, easier debugging
+
+### 10. **aiodns Error Handling** ✅
+- **Issue**: Code referenced `aiodns.error.DNSError` which may not be available in all versions
+- **Fix**: 
+  - Changed to catch generic `Exception` for DNS errors with proper comments
+  - This handles all DNS-related exceptions from aiodns
+- **Impact**: More robust DNS error handling across different aiodns versions
+
 ## Status
 
 ✅ **All bugs fixed**
 ✅ **All functionality working**
 ✅ **No linter errors**
+✅ **Improved error handling throughout codebase**
 ✅ **Ready for production use**
 

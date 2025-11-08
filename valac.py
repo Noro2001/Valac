@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Valak - Unified Security Scanner Suite
+Valac - Unified Security Scanner Suite
 Combines multiple security tools into one cohesive application:
 - IP Vulnerability Scanning (Shodan InternetDB)
 - Domain to IP Resolution
@@ -19,7 +19,7 @@ if sys.platform == 'win32':
         import codecs
         sys.stdout = codecs.getwriter('utf-8')(sys.stdout.buffer, 'strict')
         sys.stderr = codecs.getwriter('utf-8')(sys.stderr.buffer, 'strict')
-    except:
+    except (AttributeError, OSError, ImportError):
         pass
 
 # Import all modules
@@ -28,6 +28,7 @@ from modules.dns_resolver import DNSResolverModule
 from modules.subdomain_enum import SubdomainEnumModule
 from modules.fuzzer import FuzzerModule
 from modules.csv_extractor import CSVExtractorModule
+from modules.security import SecurityValidator, BlacklistProtection, perform_security_checks
 
 # Color codes
 RED = "\033[91m"
@@ -40,14 +41,14 @@ RESET = "\033[0m"
 
 BANNER = f"""{GREEN}
 
-██╗   ██╗ █████╗ ██╗      █████╗ ██╗  ██╗
-██║   ██║██╔══██╗██║     ██╔══██╗██║ ██╔╝
-██║   ██║███████║██║     ███████║█████╔╝ 
-╚██╗ ██╔╝██╔══██║██║     ██╔══██║██╔═██╗ 
- ╚████╔╝ ██║  ██║███████╗██║  ██║██║  ██╗
-  ╚═══╝  ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚═╝  ╚═╝
+██╗   ██╗ █████╗ ██╗      █████╗  ██████╗
+██║   ██║██╔══██╗██║     ██╔══██╗██╔════╝
+██║   ██║███████║██║     ███████║██║     
+╚██╗ ██╔╝██╔══██║██║     ██╔══██║██║     
+ ╚████╔╝ ██║  ██║███████╗██║  ██║╚██████╗
+  ╚═══╝  ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝ ╚═════╝
 ╔═══════════════════════════════════════╗
-║   VALAK - Security Scanner Suite      ║
+║   VALAC - Security Scanner Suite      ║
 ║   Unified Security Tool v1.0          ║
 ╚═══════════════════════════════════════╝
 {RESET}
@@ -87,31 +88,31 @@ def print_help():
 {CYAN}Usage Examples:{RESET}
 
   # Scan IP addresses
-  python valak.py scan --ip 192.168.1.1
-  python valak.py scan --file targets.txt --csv results.csv
+  python valac.py scan --ip 192.168.1.1
+  python valac.py scan --file targets.txt --csv results.csv
 
   # Resolve domains to IPs
-  python valak.py resolve --input dns.txt --output ip.txt
+  python valac.py resolve --input dns.txt --output ip.txt
 
   # Enumerate subdomains
-  python valak.py subdomain passive -d example.com -o out
-  python valak.py subdomain brute -d example.com -w wordlist.txt
+  python valac.py subdomain passive -d example.com -o out
+  python valac.py subdomain brute -d example.com -w wordlist.txt
 
   # Fuzz directories
-  python valak.py fuzz dir -u https://target.com -w wordlist.txt
+  python valac.py fuzz dir -u https://target.com -w wordlist.txt
 
   # Extract domains from CSV
-  python valak.py extract --input data.csv --output domains.txt
+  python valac.py extract --input data.csv --output domains.txt
 
 {CYAN}For detailed help on each module:{RESET}
-  python valak.py <module> --help
+  python valac.py <module> --help
 """)
 
 
 def main():
-    """Main entry point for Valak"""
+    """Main entry point for Valac"""
     parser = argparse.ArgumentParser(
-        description="Valak - Unified Security Scanner Suite",
+        description="Valac - Unified Security Scanner Suite",
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
     
@@ -130,7 +131,8 @@ def main():
     scan_parser.add_argument("--jsonl", help="Output JSONL file")
     scan_parser.add_argument("--csv", dest="csv_file", help="Output CSV file")
     scan_parser.add_argument("--xml", dest="xml_file", help="Output XML file")
-    scan_parser.add_argument("--html", dest="html_file", help="Output HTML report")
+    scan_parser.add_argument("--html", dest="html_file", help="Output HTML report (interactive dashboard)")
+    scan_parser.add_argument("--html-simple", dest="html_simple", help="Output simple HTML report (non-interactive)")
     scan_parser.add_argument("-t", "--threads", type=int, default=10, help="Number of threads")
     scan_parser.add_argument("--timeout", type=int, default=5, help="Request timeout")
     scan_parser.add_argument("--delay", type=float, default=0.1, help="Delay between requests")
@@ -147,6 +149,9 @@ def main():
     scan_parser.add_argument("--bypass-min-delay", type=float, default=1.0, help="Minimum delay between requests")
     scan_parser.add_argument("--bypass-max-delay", type=float, default=3.0, help="Maximum delay between requests")
     scan_parser.add_argument("--proxy-file", help="File with proxy list for bypass")
+    scan_parser.add_argument("--blacklist", help="File with blacklisted IPs/domains")
+    scan_parser.add_argument("--skip-security-checks", action="store_true", help="Skip security validation checks")
+    scan_parser.add_argument("--check-availability", action="store_true", help="Check target availability before scanning")
     
     # RESOLVE module
     resolve_parser = subparsers.add_parser('resolve', help='DNS to IP Resolution')
@@ -192,7 +197,7 @@ def main():
     dir_parser.add_argument("-S", nargs="*", type=int, default=[200, 204, 301, 302, 307, 401, 403], help="Status codes")
     dir_parser.add_argument("-e", default="", help="Extensions (comma-separated)")
     dir_parser.add_argument("--timeout", type=int, default=15, help="Timeout")
-    dir_parser.add_argument("--ua", default="Valak/1.0", help="User-Agent")
+    dir_parser.add_argument("--ua", default="Valac/1.0", help="User-Agent")
     
     vhost_parser = fuzz_subparsers.add_parser('vhost', help='VHost enumeration')
     vhost_parser.add_argument("-u", required=True, help="Target URL")
@@ -202,7 +207,7 @@ def main():
     vhost_parser.add_argument("-t", type=int, default=50, help="Concurrency")
     vhost_parser.add_argument("-S", nargs="*", type=int, default=[200, 204, 301, 302, 307, 401, 403], help="Status codes")
     vhost_parser.add_argument("--timeout", type=int, default=15, help="Timeout")
-    vhost_parser.add_argument("--ua", default="Valak/1.0", help="User-Agent")
+    vhost_parser.add_argument("--ua", default="Valac/1.0", help="User-Agent")
     
     # EXTRACT module
     extract_parser = subparsers.add_parser('extract', help='Extract domains from CSV')
@@ -223,9 +228,45 @@ def main():
     try:
         # Route to appropriate module
         if args.module == 'scan':
+            # Perform security checks if not skipped
+            if not getattr(args, 'skip_security_checks', False):
+                # Collect targets for validation
+                targets_to_validate = []
+                if args.ip:
+                    targets_to_validate.append(args.ip)
+                if args.domain:
+                    targets_to_validate.append(args.domain)
+                if args.file:
+                    try:
+                        with open(args.file, 'r', encoding='utf-8') as f:
+                            targets_to_validate.extend([line.strip() for line in f if line.strip() and not line.startswith('#')])
+                    except (FileNotFoundError, IOError, PermissionError, UnicodeDecodeError):
+                        pass
+                
+                if targets_to_validate:
+                    validator = perform_security_checks(
+                        targets_to_validate,
+                        check_network=True,
+                        check_availability=getattr(args, 'check_availability', False)
+                    )
+                    validator.print_warnings()
+                    if validator.errors:
+                        validator.print_errors()
+                        response = input(f"{YELLOW}Continue despite errors? (yes/no): {RESET}")
+                        if response.lower() != 'yes':
+                            print(f"{YELLOW}[INFO]{RESET} Scan cancelled by user")
+                            return
+            
             scanner = ScannerModule()
             # Set bypass flag
             args.use_bypass = getattr(args, 'bypass', False)
+            
+            # Apply blacklist if provided
+            if hasattr(args, 'blacklist') and args.blacklist:
+                blacklist_protection = BlacklistProtection(args.blacklist)
+                # Filter targets will be done in scanner.run()
+                scanner.blacklist_protection = blacklist_protection
+            
             scanner.run(args)
             # Save bypass cache if used
             if scanner.use_bypass and scanner.bypass_system:

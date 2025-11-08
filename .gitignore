@@ -1,44 +1,377 @@
+# ============================================
 # Python
+# ============================================
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
+*.egg
+*.egg-info/
+dist/
+build/
+*.whl
 .Python
+pip-log.txt
+pip-delete-this-directory.txt
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.hypothesis/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pytype/
+cython_debug/
 
 # Virtual Environment
 venv/
 env/
 ENV/
+.venv/
+env.bak/
+venv.bak/
+.conda/
 
-# IDE
+# ============================================
+# IDE & Editors
+# ============================================
+# VSCode
 .vscode/
+*.code-workspace
+.history/
+
+# PyCharm / IntelliJ IDEA
 .idea/
+*.iml
+*.iws
+*.ipr
+out/
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# Vim
 *.swp
 *.swo
+*~
+.vim/
 
-# Output files
+# Emacs
+*~
+\#*\#
+.\#*
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb
+
+# ============================================
+# Output & Data Files
+# ============================================
+# Database files
 *.db
+*.sqlite
+*.sqlite3
+*.db-shm
+*.db-wal
+
+# Data files
 *.json
 *.jsonl
 *.csv
 *.xml
 *.html
 *.txt
+# Important project files (exceptions)
 !requirements.txt
 !README.md
+!CHANGELOG.md
+!CONTRIBUTING.md
+!LICENSE
+!PYTHON_SETUP.md
+!INSTALL.md
+!PROJECT_STATUS.md
+!FIXES_APPLIED.md
+!BYPASS_ANALYSIS.md
+!UNUSED_CODE.md
+# Example and template files
+!blacklist.example.txt
+# Wordlists (keep example wordlists)
+!wordlists/**/*.txt
+# Input example files (optional - users may want to keep)
 !targets.txt
 !dns.txt
-!wordlist.txt
 
-# Cache
+# Reports
+*.pdf
+*.doc
+*.docx
+*.xls
+*.xlsx
+*.ppt
+*.pptx
+
+# ============================================
+# Cache & Temporary Files
+# ============================================
+# Valac-specific cache files
 shodan_cache.json
+*_cache.json
 *.cache
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.backup
+*.old
+*.orig
+*.save
+*.swp
+*.swo
+*~
+.cache/
+# Python cache
+.python-version
 
-# OS
+# ============================================
+# OS Files
+# ============================================
+# macOS
 .DS_Store
-Thumbs.db
+.AppleDouble
+.LSOverride
+Icon
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+.AppleDB
+.AppleDesktop
+Network Trash Folder
+Temporary Items
+.apdisk
 
-# Project specific
-out/
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+*.stackdump
+[Dd]esktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msix
+*.msm
+*.msp
+*.lnk
+
+# Linux
+*~
+.fuse_hidden*
+.directory
+.Trash-*
+.nfs*
+
+# ============================================
+# Logs & Debug
+# ============================================
 *.log
+*.log.*
+logs/
+*.out
+*.err
+*.pid
+*.seed
+*.pid.lock
+
+# ============================================
+# Archives & Compressed
+# ============================================
+*.7z
+*.dmg
+*.gz
+*.iso
+*.jar
+*.rar
+*.tar
+*.zip
+*.z
+*.Z
+*.bz2
+*.xz
+*.lz
+*.lzma
+*.lzo
+*.rz
+*.sz
+*.xz
+
+# ============================================
+# Media Files
+# ============================================
+*.mp3
+*.mp4
+*.avi
+*.mov
+*.wmv
+*.flv
+*.webm
+*.mkv
+*.m4v
+*.3gp
+*.3g2
+*.asf
+*.rm
+*.rmvb
+*.vob
+*.ogv
+*.ogg
+*.wav
+*.flac
+*.aac
+*.m4a
+*.wma
+*.opus
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.bmp
+*.tiff
+*.tif
+*.ico
+*.svg
+*.webp
+*.psd
+*.ai
+*.eps
+*.raw
+*.cr2
+*.nef
+*.orf
+*.sr2
+
+# ============================================
+# Executables & Binaries
+# ============================================
+*.exe
+*.bin
+*.dll
+*.dylib
+*.so
+*.a
+*.lib
+*.o
+*.obj
+*.class
+*.jar
+*.war
+*.ear
+*.apk
+*.app
+*.deb
+*.rpm
+*.pkg
+*.dmg
+*.iso
+
+# ============================================
+# Security & Secrets
+# ============================================
+*.pem
+*.key
+*.cert
+*.crt
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.env
+.env.local
+.env.*.local
+secrets.yaml
+secrets.yml
+*.secret
+*.private
+config.ini
+settings.ini
+credentials.json
+token.txt
+api_key.txt
+# Valac-specific secrets
+blacklist.txt
+proxies.txt
+# But keep example files
+!blacklist.example.txt
+
+# ============================================
+# Project Specific - Valac Output Files
+# ============================================
+# Output directories
+out/
+results/
+output/
+reports/
+scans/
+test_results/
+coverage/
+# Output files
+*.scan
+*.report
+*.dashboard.html
+# Benchmark and test results
+benchmark_results.json
+benchmark_*.json
+test_*.json
+# Scan result files (user-generated)
+results.csv
+results.jsonl
+results.xml
+results.html
+report.html
+report.xml
+dashboard.html
+# Database files (user-generated)
+scans.db
+*.db
+*.sqlite
+*.sqlite3
+# User input files (optional - comment out if you want to track them)
+# targets.txt
+# dns.txt
+# ip.txt
+# domains.txt
+
+# ============================================
+# CI/CD & Build Artifacts
+# ============================================
+# GitHub Actions artifacts
+.github/workflows/*.log
+# Build artifacts
+*.egg-info/
+.eggs/
+# Distribution packages (already covered above, but explicit)
+dist/
+build/
+*.whl
+*.tar.gz
+# Coverage reports
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+# Bandit security reports
+bandit-report.json
+bandit-report.html
+# Test artifacts
+.pytest_cache/
+.tox/
+.hypothesis/
 

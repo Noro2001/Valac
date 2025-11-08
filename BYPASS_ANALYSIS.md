@@ -1,7 +1,7 @@
 # Shodan Bypass System - Effectiveness Analysis
 
 ## Overview
-The bypass system has been integrated into Valak's scanner module to handle rate limits and enable larger-scale scanning operations.
+The bypass system has been integrated into Valac's scanner module to handle rate limits and enable larger-scale scanning operations.
 
 ## Working Methods Analysis
 
@@ -79,14 +79,14 @@ The bypass system has been integrated into Valak's scanner module to handle rate
 
 ### For Small Scans (< 100 IPs)
 ```bash
-python valak.py scan --file targets.txt --bypass --bypass-rpm 50
+python valac.py scan --file targets.txt --bypass --bypass-rpm 50
 ```
 - Use default settings
 - 50 RPM is acceptable for small batches
 
 ### For Medium Scans (100-1000 IPs)
 ```bash
-python valak.py scan --file targets.txt --bypass --bypass-rpm 30 --bypass-sessions 15
+python valac.py scan --file targets.txt --bypass --bypass-rpm 30 --bypass-sessions 15
 ```
 - Lower RPM to 30
 - Increase sessions to 15
@@ -94,7 +94,7 @@ python valak.py scan --file targets.txt --bypass --bypass-rpm 30 --bypass-sessio
 
 ### For Large Scans (1000+ IPs)
 ```bash
-python valak.py scan --file targets.txt --bypass \
+python valac.py scan --file targets.txt --bypass \
   --bypass-rpm 20 \
   --bypass-sessions 20 \
   --bypass-min-delay 2.0 \
@@ -148,21 +148,21 @@ python valak.py scan --file targets.txt --bypass \
 - ✅ Can handle thousands of IPs
 - ✅ IP rotation prevents single-IP limits
 
-## Usage in Valak
+## Usage in Valac
 
 ```bash
 # Basic usage with bypass
-python valak.py scan --file targets.txt --bypass
+python valac.py scan --file targets.txt --bypass
 
 # Optimized for large scans
-python valak.py scan --file targets.txt --bypass \
+python valac.py scan --file targets.txt --bypass \
   --bypass-rpm 25 \
   --bypass-sessions 15 \
   --bypass-min-delay 2.0 \
   --bypass-max-delay 4.0
 
 # With proxies
-python valak.py scan --file targets.txt --bypass \
+python valac.py scan --file targets.txt --bypass \
   --proxy-file proxies.txt \
   --bypass-rpm 30
 ```

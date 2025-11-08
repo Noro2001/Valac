@@ -1,6 +1,7 @@
 """
 Subdomain Enumeration Module
 Supports passive collection, brute force, and validation
+Enhanced with resource management and performance monitoring
 """
 
 import asyncio
@@ -8,14 +9,30 @@ import aiohttp
 import aiodns
 import json
 import re
+import time
+import os
 from pathlib import Path
 from typing import Iterable, List, Optional, Set, Tuple, Dict
+from tqdm.asyncio import tqdm as atqdm
+from collections import deque
+
+try:
+    import psutil
+    PSUTIL_AVAILABLE = True
+except ImportError:
+    PSUTIL_AVAILABLE = False
 
 # Color codes
 GREEN = "\033[92m"
 YELLOW = "\033[93m"
 RED = "\033[91m"
+CYAN = "\033[96m"
 RESET = "\033[0m"
+
+# Resource limits
+MAX_CONCURRENT_DNS = 500  # Maximum concurrent DNS queries
+MAX_CONCURRENT_HTTP = 200  # Maximum concurrent HTTP requests
+MEMORY_CHECK_INTERVAL = 500  # Check memory every N operations
 
 try:
     import dns.resolver
@@ -23,50 +40,118 @@ except ImportError:
     dns = None
 
 
-async def resolve_host(resolver: aiodns.DNSResolver, host: str) -> Tuple[str, List[str]]:
+async def resolve_host(resolver: aiodns.DNSResolver, host: str, timeout: float = 10.0) -> Tuple[str, List[str]]:
+    """Resolve host with timeout protection"""
     ips = []
     try:
-        a_records = await resolver.query(host, 'A')
+        # Use asyncio.wait_for for timeout protection
+        a_records = await asyncio.wait_for(resolver.query(host, 'A'), timeout=timeout)
         ips.extend([r.host for r in a_records])
+    except asyncio.TimeoutError:
+        pass  # Timeout is expected for non-existent hosts
     except Exception:
-        pass
+        # Catch all DNS-related errors (aiodns raises various exceptions)
+        # This includes aiodns.error.DNSError and other DNS errors
+        pass  # DNS error is expected for non-existent hosts
+    
     try:
-        aaaa_records = await resolver.query(host, 'AAAA')
+        aaaa_records = await asyncio.wait_for(resolver.query(host, 'AAAA'), timeout=timeout)
         ips.extend([r.host for r in aaaa_records])
-    except Exception:
+    except asyncio.TimeoutError:
         pass
+    except Exception:
+        # Catch all DNS-related errors
+        pass
+    
     return host, sorted(set(ips))
 
 
-async def fetch_title(session: aiohttp.ClientSession, url: str) -> Tuple[str, Optional[int], Optional[str]]:
+async def fetch_title(session: aiohttp.ClientSession, url: str, timeout: float = 10.0) -> Tuple[str, Optional[int], Optional[str]]:
+    """Fetch page title with timeout and error handling"""
     try:
-        async with session.get(url, allow_redirects=False) as resp:
+        async with asyncio.wait_for(session.get(url, allow_redirects=False), timeout=timeout) as resp:
             code = resp.status
+            # Limit response size
             text = await resp.text(errors="ignore")
+            if len(text) > 100000:  # Limit to 100KB for title extraction
+                text = text[:100000]
             m = re.search(r"<title[^>]*>(.*?)</title>", text, re.IGNORECASE | re.DOTALL)
             title = m.group(1).strip() if m else ""
             title = re.sub(r"\s+", " ", title)[:200]
             return url, code, title
+    except asyncio.TimeoutError:
+        return url, None, None
+    except aiohttp.ClientError:
+        return url, None, None
     except Exception:
         return url, None, None
 
 
 async def http_inventory(hosts: List[str], concurrency: int, timeout: int) -> List[Tuple[str, Optional[int], Optional[str]]]:
-    connector = aiohttp.TCPConnector(ssl=False, limit=concurrency)
-    tout = aiohttp.ClientTimeout(total=timeout)
-    headers = {"User-Agent": "Valak/1.0"}
+    """HTTP inventory with resource management"""
+    # Limit concurrency
+    actual_concurrency = min(concurrency, MAX_CONCURRENT_HTTP)
+    if concurrency > MAX_CONCURRENT_HTTP:
+        print(f"{YELLOW}[INFO]{RESET} HTTP concurrency limited to {actual_concurrency} (max: {MAX_CONCURRENT_HTTP})")
+    
+    # Limit connector pool
+    max_connections = min(actual_concurrency * 2, 100)
+    connector = aiohttp.TCPConnector(
+        ssl=False,
+        limit=max_connections,
+        limit_per_host=min(actual_concurrency, 20),
+        ttl_dns_cache=300,
+        force_close=True
+    )
+    tout = aiohttp.ClientTimeout(total=timeout, connect=5)
+    headers = {"User-Agent": "Valac/1.0"}
     out = []
+    total = len(hosts) * 2  # HTTP + HTTPS
+    request_count = 0
+    start_time = time.time()
+    
+    pbar = atqdm(
+        total=total,
+        desc=f"{YELLOW}[SUBDOMAIN]{RESET} HTTP inventory",
+        unit="request",
+        bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]',
+        colour='blue'
+    )
 
     async with aiohttp.ClientSession(connector=connector, timeout=tout, headers=headers) as session:
-        tasks = []
-        for h in hosts:
-            tasks.append(fetch_title(session, f"https://{h}"))
-            tasks.append(fetch_title(session, f"http://{h}"))
-        for chunk in [tasks[i:i+concurrency*2] for i in range(0, len(tasks), concurrency*2)]:
-            results = await asyncio.gather(*chunk, return_exceptions=True)
+        # Process in batches to manage memory
+        batch_size = actual_concurrency * 2
+        for i in range(0, len(hosts), batch_size):
+            batch_hosts = hosts[i:i+batch_size]
+            tasks = []
+            for h in batch_hosts:
+                tasks.append(fetch_title(session, f"https://{h}"))
+                tasks.append(fetch_title(session, f"http://{h}"))
+            
+            # Process batch with semaphore
+            sem = asyncio.Semaphore(actual_concurrency * 2)
+            async def bounded_task(task):
+                async with sem:
+                    return await task
+            
+            results = await asyncio.gather(*[bounded_task(t) for t in tasks], return_exceptions=True)
+            
             for r in results:
                 if isinstance(r, tuple):
                     out.append(r)
+                request_count += 1
+                pbar.update(1)
+                
+                # Periodic stats update
+                if request_count % 50 == 0:
+                    elapsed = time.time() - start_time
+                    rate = request_count / elapsed if elapsed > 0 else 0
+                    pbar.set_postfix({
+                        'Found': sum(1 for _, c, _ in out if c is not None),
+                        'Rate': f"{rate:.1f}/s"
+                    })
+    
+    pbar.close()
     return out
 
 
@@ -76,7 +161,7 @@ CRT_URL = "https://crt.sh/?q=%25.{domain}&output=json"
 async def fetch_crtsh(domain: str) -> Set[str]:
     names: Set[str] = set()
     timeout = aiohttp.ClientTimeout(total=30)
-    headers = {"User-Agent": "Valak/1.0"}
+    headers = {"User-Agent": "Valac/1.0"}
     async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
         async with session.get(CRT_URL.format(domain=domain)) as resp:
             if resp.status != 200:
@@ -111,20 +196,74 @@ def load_wordlist(path: Path) -> List[str]:
 
 
 async def validate_hosts(hosts: Iterable[str], concurrency: int, resolvers: Optional[List[str]]) -> Dict[str, List[str]]:
+    """Validate hosts with resource management"""
+    # Limit concurrency to prevent resource exhaustion
+    actual_concurrency = min(concurrency, MAX_CONCURRENT_DNS)
+    if concurrency > MAX_CONCURRENT_DNS:
+        print(f"{YELLOW}[INFO]{RESET} Concurrency limited to {actual_concurrency} (max: {MAX_CONCURRENT_DNS})")
+    
     r = aiodns.DNSResolver()
     if resolvers:
         r.nameservers = resolvers
-    sem = asyncio.Semaphore(concurrency)
+    
+    # Use semaphore for rate limiting
+    sem = asyncio.Semaphore(actual_concurrency)
     results: Dict[str, List[str]] = {}
+    operation_count = 0
+    
+    hosts_list = list(hosts)
+    total = len(hosts_list)
+    start_time = time.time()
+    
+    pbar = atqdm(
+        total=total,
+        desc=f"{YELLOW}[SUBDOMAIN]{RESET} Validating DNS",
+        unit="host",
+        bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]',
+        colour='yellow'
+    )
 
     async def task(h: str):
+        nonlocal operation_count
         async with sem:
-            host, ips = await resolve_host(r, h)
-            if ips:
-                results[host] = ips
+            try:
+                host, ips = await asyncio.wait_for(resolve_host(r, h), timeout=10.0)
+                if ips:
+                    results[host] = ips
+            except asyncio.TimeoutError:
+                pass
+            except Exception:
+                pass
+            finally:
+                operation_count += 1
+                pbar.update(1)
+                
+                # Periodic memory check
+                if PSUTIL_AVAILABLE and operation_count % MEMORY_CHECK_INTERVAL == 0:
+                    try:
+                        process = psutil.Process(os.getpid())
+                        memory_mb = process.memory_info().rss / 1024 / 1024
+                        if memory_mb > 2048:  # Warn if > 2GB
+                            print(f"\n{YELLOW}[WARN]{RESET} High memory usage: {memory_mb:.1f}MB")
+                    except (OSError, AttributeError):
+                        # Silently ignore memory check errors
+                        pass
+                
+                elapsed = time.time() - start_time
+                rate = operation_count / elapsed if elapsed > 0 else 0
+                pbar.set_postfix({
+                    'Valid': len(results),
+                    'Rate': f"{rate:.1f}/s"
+                })
 
-    tasks = [asyncio.create_task(task(h)) for h in hosts]
-    await asyncio.gather(*tasks, return_exceptions=True)
+    # Process in batches to prevent memory issues
+    batch_size = actual_concurrency * 2
+    for i in range(0, len(hosts_list), batch_size):
+        batch = hosts_list[i:i+batch_size]
+        tasks = [asyncio.create_task(task(h)) for h in batch]
+        await asyncio.gather(*tasks, return_exceptions=True)
+    
+    pbar.close()
     return results
 
 

@@ -19,7 +19,16 @@ import sqlite3
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import List, Dict, Optional, Any
+from tqdm import tqdm
+from collections import deque
 from .bypass_system import BypassSystem
+from .visualizer import DashboardGenerator
+
+try:
+    import psutil
+    PSUTIL_AVAILABLE = True
+except ImportError:
+    PSUTIL_AVAILABLE = False
 
 # Color codes
 RED = "\033[91m"
@@ -129,13 +138,16 @@ class ScannerModule:
         self.use_bypass = False
         self.scan_results = []  # Store results for XML/HTML output
         self.results_lock = threading.Lock()
+        self.blacklist_protection = None  # Blacklist protection instance
         self.stats = {
             'scanned': 0,
             'errors': 0,
             'vulns_found': 0,
             'critical_ips': [],
             'start_time': None,
-            'end_time': None
+            'end_time': None,
+            'memory_samples': deque(maxlen=100),  # Track memory usage
+            'last_memory_check': 0
         }
 
     def get_severity_color(self, cvss_score):
@@ -155,8 +167,21 @@ class ScannerModule:
         scores = []
         for vuln in vulns:
             cve_info = cve_cache.get(vuln, {})
-            cvss = cve_info.get('cvss_v3') or cve_info.get('cvss', 0)
-            scores.append(cvss)
+            # Try multiple CVSS score fields (different APIs use different field names)
+            cvss = (cve_info.get('cvss_v3') or 
+                   cve_info.get('cvss_v3_score') or
+                   cve_info.get('cvss') or 
+                   cve_info.get('cvss_score') or
+                   cve_info.get('score') or 0)
+            # Convert to float if it's a string
+            try:
+                cvss = float(cvss) if cvss else 0.0
+            except (ValueError, TypeError):
+                cvss = 0.0
+            # Only add non-zero scores
+            if cvss > 0:
+                scores.append(cvss)
+        # Return average of scores, or 0 if no valid scores found
         return sum(scores) / len(scores) if scores else 0.0
 
     def get_risk_level(self, severity_score: float) -> str:
@@ -172,7 +197,13 @@ class ScannerModule:
     def fetch_cve_details(self, cve_id):
         if cve_id in self.cache:
             entry = self.cache[cve_id]
-            return {k: v for k, v in entry.items() if k != '_ts'}
+            # Check if cache entry is expired (older than 24 hours)
+            if '_ts' in entry:
+                age = time.time() - entry['_ts']
+                if age < 86400:  # 24 hours
+                    return {k: v for k, v in entry.items() if k != '_ts'}
+            else:
+                return {k: v for k, v in entry.items() if k != '_ts'}
 
         try:
             url = f"https://cvedb.shodan.io/cve/{cve_id}"
@@ -185,6 +216,7 @@ class ScannerModule:
                 return data
         except requests.RequestException:
             pass
+        # Return empty dict with default score if API fails
         return {}
 
     def fetch_geolocation(self, ip: str) -> Dict[str, Any]:
@@ -193,8 +225,22 @@ class ScannerModule:
         try:
             response = self.session.get(f"http://ip-api.com/json/{ip}", timeout=3)
             if response.status_code == 200:
-                return response.json()
-        except:
+                data = response.json()
+                # Normalize field names for consistency
+                return {
+                    'lat': data.get('lat'),
+                    'lon': data.get('lon'),
+                    'city': data.get('city'),
+                    'country': data.get('country'),
+                    'regionName': data.get('regionName'),
+                    'region': data.get('regionName'),
+                    'isp': data.get('isp'),
+                    'org': data.get('org'),
+                    'as': data.get('as'),
+                    'query': data.get('query')
+                }
+        except (requests.RequestException, KeyError, ValueError) as e:
+            # Silently ignore geolocation errors
             pass
         return {}
 
@@ -221,7 +267,8 @@ class ScannerModule:
                 "timestamp": result.timestamp
             }
             requests.post(self.webhook_url, json=payload, timeout=5)
-        except:
+        except (requests.RequestException, ConnectionError, TimeoutError) as e:
+            # Silently ignore webhook errors to not interrupt scanning
             pass
 
     def format_output(self, ip, data, options):
@@ -299,7 +346,7 @@ class ScannerModule:
         """Save results to XML file"""
         try:
             import xml.etree.ElementTree as ET
-            root = ET.Element("valak_scan")
+            root = ET.Element("valac_scan")
             root.set("timestamp", datetime.datetime.now().isoformat())
             
             for result in results:
@@ -327,13 +374,18 @@ class ScannerModule:
         except Exception as e:
             print(f"{RED}[ERROR]{RESET} Failed to save XML: {e}")
     
-    def save_to_html(self, results: List[ScanResult], filename: str):
-        """Save results to HTML file"""
+    def save_to_html(self, results: List[ScanResult], filename: str, interactive: bool = True):
+        """Save results to HTML file (interactive dashboard or simple report)"""
         try:
-            html = f"""<!DOCTYPE html>
+            if interactive:
+                # Use interactive dashboard
+                self.save_to_dashboard(results, filename)
+            else:
+                # Use simple HTML report
+                html = f"""<!DOCTYPE html>
 <html>
 <head>
-    <title>Valak Scan Report</title>
+    <title>Valac Scan Report</title>
     <style>
         body {{ font-family: Arial, sans-serif; margin: 20px; background: #f5f5f5; }}
         h1 {{ color: #333; text-align: center; }}
@@ -348,7 +400,7 @@ class ScannerModule:
     </style>
 </head>
 <body>
-    <h1>🔍 Valak Security Scan Report</h1>
+    <h1>🔍 Valac Security Scan Report</h1>
     <div class="summary">
         <h2>Summary</h2>
         <p>Scan Date: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
@@ -365,9 +417,9 @@ class ScannerModule:
             <th>Risk Level</th>
         </tr>
 """
-            for result in sorted(results, key=lambda x: x.severity_score, reverse=True):
-                severity_class = result.risk_level.lower()
-                html += f"""        <tr class="{severity_class}">
+                for result in sorted(results, key=lambda x: x.severity_score, reverse=True):
+                    severity_class = result.risk_level.lower()
+                    html += f"""        <tr class="{severity_class}">
             <td>{result.ip}</td>
             <td>{', '.join(map(str, result.ports[:10]))}</td>
             <td>{', '.join(result.vulns[:5])}</td>
@@ -375,18 +427,60 @@ class ScannerModule:
             <td><strong>{result.risk_level}</strong></td>
         </tr>
 """
-            html += """    </table>
+                html += """    </table>
 </body>
 </html>"""
-            
-            with open(filename, 'w', encoding='utf-8') as f:
-                f.write(html)
-            print(f"{GREEN}[INFO]{RESET} HTML report saved to {filename}")
+                
+                with open(filename, 'w', encoding='utf-8') as f:
+                    f.write(html)
+                print(f"{GREEN}[INFO]{RESET} HTML report saved to {filename}")
         except Exception as e:
             print(f"{RED}[ERROR]{RESET} Failed to save HTML: {e}")
+    
+    def save_to_dashboard(self, results: List[ScanResult], filename: str):
+        """Save results to interactive dashboard"""
+        try:
+            # Convert ScanResult to dict format for visualizer
+            results_dict = []
+            for result in results:
+                result_dict = {
+                    'ip': result.ip,
+                    'ports': result.ports,
+                    'vulns': result.vulns,
+                    'hostnames': result.hostnames,
+                    'severity_score': result.severity_score,
+                    'risk_level': result.risk_level,
+                    'geolocation': {}
+                }
+                
+                # Process geolocation if available
+                if result.geolocation:
+                    geo = result.geolocation
+                    result_dict['geolocation'] = {
+                        'lat': geo.get('lat'),
+                        'lon': geo.get('lon'),
+                        'city': geo.get('city'),
+                        'country': geo.get('country'),
+                        'region': geo.get('regionName'),
+                        'isp': geo.get('isp')
+                    }
+                
+                results_dict.append(result_dict)
+            
+            # Generate dashboard
+            generator = DashboardGenerator()
+            generator.generate(results_dict, filename)
+            print(f"{GREEN}[INFO]{RESET} Interactive dashboard saved to {filename}")
+        except Exception as e:
+            print(f"{RED}[ERROR]{RESET} Failed to save dashboard: {e}")
+            import traceback
+            traceback.print_exc()
 
     def process_ip(self, ip, options, jsonl_file=None, csv_file=None):
+        """Process single IP with timeout and exception protection"""
         start_time = time.time()
+        max_ip_timeout = 60  # Maximum time per IP
+        
         try:
             # Use bypass system if enabled
             if self.use_bypass and self.bypass_system:
@@ -395,6 +489,7 @@ class ScannerModule:
                     data = result['data']
                     response_time = time.time() - start_time
                 else:
+                    self.stats['scanned'] += 1
                     return
             else:
                 # Standard method
@@ -413,10 +508,10 @@ class ScannerModule:
                 
                 if response.status_code != 200:
                     if response.status_code == 404:
-                        print(f"{YELLOW}[WARN]{RESET} No data found for {ip}")
+                        tqdm.write(f"{YELLOW}[WARN]{RESET} No data found for {ip}")
                     else:
                         self.stats['errors'] += 1
-                        print(f"{RED}[ERROR]{RESET} HTTP {response.status_code} for {ip}")
+                        tqdm.write(f"{RED}[ERROR]{RESET} HTTP {response.status_code} for {ip}")
                     return
                 
                 data = response.json()
@@ -427,8 +522,28 @@ class ScannerModule:
             cpe = data.get("cpe", [])
             tags = data.get("tags", [])
 
+            # Fetch CVE details to populate cache before calculating severity score
+            # This ensures CVSS scores are available for severity calculation
+            for vuln in vulns:
+                cve_info = self.fetch_cve_details(vuln)
+                # If CVE details not in cache yet, try to get basic info
+                if not cve_info and vuln not in self.cache:
+                    # Store placeholder to avoid repeated API calls
+                    self.cache[vuln] = {'_ts': time.time()}
+
             severity_score = self.calculate_severity_score(vulns, self.cache)
             risk_level = self.get_risk_level(severity_score)
+            
+            # If severity score is 0 but we have vulns, assign a default score based on count
+            if severity_score == 0.0 and vulns:
+                # Assign default score: 1 vuln = 3.0 (MEDIUM), 5+ vulns = 7.0 (HIGH), 10+ = 9.0 (CRITICAL)
+                if len(vulns) >= 10:
+                    severity_score = 9.0
+                elif len(vulns) >= 5:
+                    severity_score = 7.0
+                elif len(vulns) >= 1:
+                    severity_score = 4.0
+                risk_level = self.get_risk_level(severity_score)
             geolocation = self.fetch_geolocation(ip) if self.enable_geolocation else {}
             technologies = self.detect_technologies(ports)
 
@@ -449,7 +564,8 @@ class ScannerModule:
 
             results = self.format_output(ip, data, options)
             for r in results:
-                print(r)
+                # Use tqdm.write() to ensure output is visible even with progress bar
+                tqdm.write(r)
 
             self.save_results(result, jsonl_file, csv_file)
             
@@ -461,43 +577,99 @@ class ScannerModule:
             self.stats['vulns_found'] += len(vulns)
             if severity_score >= 7.0:
                 self.stats['critical_ips'].append(ip)
+            
+            # Periodic memory check (every 100 scans)
+            if self.stats['scanned'] % 100 == 0:
+                memory = self.check_memory()
+                if memory and memory > 2048:  # Warn if > 2GB
+                    tqdm.write(f"{YELLOW}[WARN]{RESET} High memory usage: {memory:.1f}MB")
 
             if risk_level in ["CRITICAL", "HIGH"]:
                 self.send_webhook_notification(result)
 
             if self.delay and not self.use_bypass:
                 time.sleep(self.delay)
+            
+            # Check for timeout
+            elapsed = time.time() - start_time
+            if elapsed > max_ip_timeout:
+                self.stats['errors'] += 1
+                tqdm.write(f"{YELLOW}[WARN]{RESET} IP {ip} processing exceeded timeout ({max_ip_timeout}s)")
+                return
 
+        except requests.Timeout:
+            self.stats['errors'] += 1
+            tqdm.write(f"{YELLOW}[WARN]{RESET} Request timeout for {ip}")
         except requests.RequestException as e:
             self.stats['errors'] += 1
-            print(f"{RED}[ERROR]{RESET} Request failed for {ip}: {str(e)}")
+            # Don't print full error for common network issues
+            error_msg = str(e)
+            if "Connection" in error_msg or "timeout" in error_msg.lower():
+                tqdm.write(f"{YELLOW}[WARN]{RESET} Connection issue for {ip}")
+            else:
+                tqdm.write(f"{RED}[ERROR]{RESET} Request failed for {ip}: {error_msg[:100]}")
+        except KeyboardInterrupt:
+            raise  # Re-raise to allow proper cleanup
         except Exception as e:
             self.stats['errors'] += 1
-            print(f"{RED}[ERROR]{RESET} Unexpected error for {ip}: {str(e)}")
+            # Limit error message length
+            error_msg = str(e)[:200]
+            tqdm.write(f"{RED}[ERROR]{RESET} Unexpected error for {ip}: {error_msg}")
 
     def process_ips_concurrent(self, ips, options, jsonl_file=None, csv_file=None):
         # Clear output files if they exist (for fresh start)
         if jsonl_file and os.path.exists(jsonl_file):
             try:
                 os.remove(jsonl_file)
-            except:
+            except (OSError, PermissionError) as e:
+                # Silently ignore file deletion errors
                 pass
         if csv_file and os.path.exists(csv_file):
             try:
                 os.remove(csv_file)
-            except:
+            except (OSError, PermissionError) as e:
+                # Silently ignore file deletion errors
                 pass
         
+        # Filter valid IPs
+        valid_ips = [ip.strip() for ip in ips if ip.strip()]
+        total_ips = len(valid_ips)
+        
+        if total_ips == 0:
+            print(f"{YELLOW}[WARN]{RESET} No valid IPs to scan")
+            return
+        
+        # Initialize progress bar
+        operation = "Scanning IPs" if not self.use_bypass else "Scanning IPs (Bypass Mode)"
+        pbar = tqdm(
+            total=total_ips,
+            desc=f"{CYAN}[SCAN]{RESET} {operation}",
+            unit="IP",
+            bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]',
+            colour='green'
+        )
+        
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-            futures = {executor.submit(self.process_ip, ip.strip(), options, jsonl_file, csv_file): ip 
-                      for ip in ips if ip.strip()}
+            futures = {executor.submit(self.process_ip, ip, options, jsonl_file, csv_file): ip 
+                      for ip in valid_ips}
 
             for future in as_completed(futures):
                 try:
                     future.result()
+                    pbar.update(1)
+                    # Update description with current stats
+                    pbar.set_postfix({
+                        'Scanned': self.stats['scanned'],
+                        'Errors': self.stats['errors'],
+                        'Vulns': self.stats['vulns_found']
+                    })
                 except Exception as e:
                     ip = futures[future]
-                    print(f"{RED}[ERROR]{RESET} Failed processing {ip}: {str(e)}")
+                    self.stats['errors'] += 1
+                    pbar.write(f"{RED}[ERROR]{RESET} Failed processing {ip}: {str(e)}")
+                    pbar.update(1)
+        
+        pbar.close()
 
     def validate_ip(self, ip):
         try:
@@ -534,14 +706,35 @@ class ScannerModule:
         try:
             ips = socket.gethostbyname_ex(domain)[2]
             return ips
-        except:
+        except (socket.gaierror, socket.herror, OSError):
             return []
+
+    def check_memory(self):
+        """Check and record memory usage"""
+        if not PSUTIL_AVAILABLE:
+            return
+        try:
+            process = psutil.Process(os.getpid())
+            memory_mb = process.memory_info().rss / 1024 / 1024
+            self.stats['memory_samples'].append(memory_mb)
+            self.stats['last_memory_check'] = time.time()
+            return memory_mb
+        except (OSError, AttributeError):
+            # Silently ignore memory check errors
+            return 0
 
     def print_statistics(self):
         if not self.stats['start_time']:
             return
 
         duration = (self.stats['end_time'] or time.time()) - self.stats['start_time']
+        
+        # Get memory stats
+        memory_info = ""
+        if PSUTIL_AVAILABLE and self.stats['memory_samples']:
+            avg_memory = sum(self.stats['memory_samples']) / len(self.stats['memory_samples'])
+            max_memory = max(self.stats['memory_samples'])
+            memory_info = f"\n{YELLOW}Memory usage:{RESET} Avg: {avg_memory:.1f}MB, Peak: {max_memory:.1f}MB"
 
         print(f"\n{CYAN}{'=' * 60}{RESET}")
         print(f"{CYAN}                   SCAN STATISTICS{RESET}")
@@ -553,6 +746,8 @@ class ScannerModule:
         print(f"{YELLOW}Scan duration:{RESET} {duration:.2f}s")
         if duration > 0:
             print(f"{YELLOW}Scan rate:{RESET} {self.stats['scanned'] / duration:.2f} targets/s")
+        if memory_info:
+            print(memory_info)
 
         if self.stats['critical_ips']:
             print(f"\n{RED}Top Critical IPs:{RESET}")
@@ -647,6 +842,18 @@ class ScannerModule:
             ips = self.read_ips_from_file(args.file)
             if ips:
                 print(f"{YELLOW}[INFO]{RESET} Loaded {len(ips)} targets from file")
+                
+                # Apply blacklist if available
+                if self.blacklist_protection:
+                    valid_ips, blacklisted_ips = self.blacklist_protection.filter_blacklisted(ips)
+                    if blacklisted_ips:
+                        print(f"{YELLOW}[WARN]{RESET} {len(blacklisted_ips)} targets filtered by blacklist")
+                        for bl_item in blacklisted_ips[:5]:  # Show first 5
+                            print(f"  {YELLOW}-{RESET} {bl_item}")
+                        if len(blacklisted_ips) > 5:
+                            print(f"  {YELLOW}... and {len(blacklisted_ips) - 5} more{RESET}")
+                    ips = valid_ips
+                
                 targets.extend(ips)
             else:
                 print(f"{RED}[ERROR]{RESET} No valid IPs found in file")
@@ -688,7 +895,11 @@ class ScannerModule:
         
         if hasattr(args, 'html_file') and args.html_file:
             with self.results_lock:
-                self.save_to_html(self.scan_results, args.html_file)
+                self.save_to_html(self.scan_results, args.html_file, interactive=True)
+        
+        if hasattr(args, 'html_simple') and args.html_simple:
+            with self.results_lock:
+                self.save_to_html(self.scan_results, args.html_simple, interactive=False)
 
         print(f"\n{GREEN}[SUCCESS]{RESET} Scan completed!")
 
