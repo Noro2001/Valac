@@ -242,6 +242,7 @@ logs/
 *.jpg
 *.jpeg
 *.png
+!valac.png
 *.gif
 *.bmp
 *.tiff
