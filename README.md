@@ -1,14 +1,13 @@
 # 🔍 Valac - Unified Security Scanner Suite
 
-██╗   ██╗ █████╗ ██╗      █████╗  ██████╗
+<div align="center">
+  <img src="Valac.png" alt="Valac Logo" width="200"/>
+ ██╗   ██╗ █████╗ ██╗      █████╗  ██████╗
 ██║   ██║██╔══██╗██║     ██╔══██╗██╔════╝
 ██║   ██║███████║██║     ███████║██║     
 ╚██╗ ██╔╝██╔══██║██║     ██╔══██║██║     
  ╚████╔╝ ██║  ██║███████╗██║  ██║╚██████╗
   ╚═══╝  ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝ ╚═════╝
-
-<div align="center">
-  <img src="Valac.png" alt="Valac Logo" width="200"/>
 </div>
 
 **Valac** is a comprehensive, all-in-one security scanning tool that combines multiple security utilities into a single, cohesive application. Perfect for penetration testers, security researchers, and system administrators.
