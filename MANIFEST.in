@@ -1,0 +1,7 @@
+include Valac.png
+include valac.png
+include README.md
+include LICENSE
+include requirements.txt
+recursive-include wordlists *.txt
+

@@ -48,6 +48,12 @@ setup(
     packages=find_packages(exclude=["tests", "*.tests", "*.tests.*", "tests.*"]),
     py_modules=["valac"],  # Include valac.py as a module
     include_package_data=True,
+    package_data={
+        "": ["Valac.png", "valac.png"],  # Include icon files
+    },
+    data_files=[
+        ("", ["Valac.png"]),  # Include icon in root of package
+    ],
     entry_points={
         "console_scripts": [
             "valac=valac:main",
